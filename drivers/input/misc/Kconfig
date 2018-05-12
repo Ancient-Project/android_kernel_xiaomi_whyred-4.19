@@ -885,4 +885,9 @@ config INPUT_SC27XX_VIBRA
 	  To compile this driver as a module, choose M here. The module will
 	  be called sc27xx_vibra.
 
+config HALL
+	tristate "HALL Switch"
+	help
+	  If you say yes here, you get support for hall switch control device
+
 endif
