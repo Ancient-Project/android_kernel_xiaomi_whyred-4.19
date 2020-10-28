@@ -23,9 +23,8 @@
 #include <linux/irq.h>
 #include <linux/gpio.h>
 #include <linux/proc_fs.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/input/mt.h>
-#include <linux/wakelock.h>
 #include <linux/of_gpio.h>
 #include <linux/of_irq.h>
 
@@ -285,6 +284,8 @@ int32_t CTP_I2C_READ(struct i2c_client *client, uint16_t address, uint8_t *buf, 
 	int32_t ret = -1;
 	int32_t retries = 0;
 
+	mutex_lock(&ts->xbuf_lock);
+
 	msgs[0].flags = !I2C_M_RD;
 	msgs[0].addr  = address;
 	msgs[0].len   = 1;
@@ -293,7 +294,7 @@ int32_t CTP_I2C_READ(struct i2c_client *client, uint16_t address, uint8_t *buf, 
 	msgs[1].flags = I2C_M_RD;
 	msgs[1].addr  = address;
 	msgs[1].len   = len - 1;
-	msgs[1].buf   = &buf[1];
+	msgs[1].buf   = ts->xbuf;
 
 	while (retries < 5) {
 		ret = i2c_transfer(client->adapter, msgs, 2);
@@ -305,6 +306,9 @@ int32_t CTP_I2C_READ(struct i2c_client *client, uint16_t address, uint8_t *buf, 
 		NVT_ERR("error, ret=%d\n", ret);
 		ret = -EIO;
 	}
+	memcpy(buf + 1, ts->xbuf, len - 1);
+
+	mutex_unlock(&ts->xbuf_lock);
 
 	return ret;
 }
@@ -322,10 +326,13 @@ int32_t CTP_I2C_WRITE(struct i2c_client *client, uint16_t address, uint8_t *buf,
 	int32_t ret = -1;
 	int32_t retries = 0;
 
+	mutex_lock(&ts->xbuf_lock);
+
 	msg.flags = !I2C_M_RD;
 	msg.addr  = address;
 	msg.len   = len;
-	msg.buf   = buf;
+	memcpy(ts->xbuf, buf, len);
+	msg.buf   = ts->xbuf;
 
 	while (retries < 5) {
 		ret = i2c_transfer(client->adapter, &msg, 1);
@@ -337,6 +344,8 @@ int32_t CTP_I2C_WRITE(struct i2c_client *client, uint16_t address, uint8_t *buf,
 		NVT_ERR("error, ret=%d\n", ret);
 		ret = -EIO;
 	}
+
+	mutex_unlock(&ts->xbuf_lock);
 
 	return ret;
 }
@@ -588,8 +597,8 @@ info_retry:
 			NVT_ERR("retry_count=%d\n", retry_count);
 			goto info_retry;
 		} else {
-			NVT_ERR("Set default fw_ver=%d, x_num=%d, y_num=%d, \
-					abs_x_max=%d, abs_y_max=%d, max_button_num=%d!\n",
+			NVT_ERR("Set default fw_ver=%d, x_num=%d, y_num=%d, "
+					"abs_x_max=%d, abs_y_max=%d, max_button_num=%d!\n",
 					ts->fw_ver, ts->x_num, ts->y_num,
 					ts->abs_x_max, ts->abs_y_max, ts->max_button_num);
 			ret = -1;
@@ -780,8 +789,7 @@ static int32_t nvt_flash_proc_init(void)
 /* function page definition */
 #define FUNCPAGE_GESTURE         1
 
-static struct wake_lock gestrue_wakelock;
-
+static struct wakeup_source gestrue_wakelock;
 /*******************************************************
 Description:
 	Novatek touchscreen wake up gesture key report function.
@@ -1140,7 +1148,7 @@ static irqreturn_t nvt_ts_irq_handler(int32_t irq, void *dev_id)
 
 #if WAKEUP_GESTURE
 	if (bTouchIsAwake == 0) {
-		wake_lock_timeout(&gestrue_wakelock, msecs_to_jiffies(5000));
+		__pm_wakeup_event(&gestrue_wakelock, msecs_to_jiffies(5000));
 	}
 #endif
 
@@ -1286,6 +1294,9 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
 		goto err_check_functionality_failed;
 	}
 
+	mutex_init(&ts->lock);
+	mutex_init(&ts->xbuf_lock);
+	mutex_init(&ts->pm_mutex);
 
 	msleep(10);
     ts->vcc_i2c = regulator_get(&client->dev, "vcc_i2c-supply");
@@ -1315,8 +1326,6 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
 		ret = -EINVAL;
 		goto err_chipvertrim_failed;
 	}
-
-	mutex_init(&ts->lock);
 
 	mutex_lock(&ts->lock);
 	nvt_bootloader_reset();
@@ -1385,7 +1394,7 @@ static int32_t nvt_ts_probe(struct i2c_client *client, const struct i2c_device_i
 	for (retry = 0; retry < (sizeof(gesture_key_array) / sizeof(gesture_key_array[0])); retry++) {
 		input_set_capability(ts->input_dev, EV_KEY, gesture_key_array[retry]);
 	}
-	wake_lock_init(&gestrue_wakelock, WAKE_LOCK_SUSPEND, "poll-wake-lock");
+	wakeup_source_init(&gestrue_wakelock, "gestrue_wakelock");
 #endif
 
 	sprintf(ts->phys, "input/ts");
@@ -1519,8 +1528,10 @@ err_input_register_device_failed:
 	input_free_device(ts->input_dev);
 err_input_dev_alloc_failed:
 err_create_nvt_wq_failed:
-	mutex_destroy(&ts->lock);
 err_chipvertrim_failed:
+	mutex_destroy(&ts->xbuf_lock);
+	mutex_destroy(&ts->lock);
+	mutex_destroy(&ts->pm_mutex);
 err_check_functionality_failed:
 	gpio_free(ts->irq_gpio);
 err_gpio_config_failed:
@@ -1547,7 +1558,9 @@ static int32_t nvt_ts_remove(struct i2c_client *client)
 	unregister_early_suspend(&ts->early_suspend);
 #endif
 
+	mutex_destroy(&ts->xbuf_lock);
 	mutex_destroy(&ts->lock);
+	mutex_destroy(&ts->pm_mutex);
 
 	NVT_LOG("Removing driver...\n");
 
@@ -1589,30 +1602,24 @@ static int32_t nvt_ts_suspend(struct device *dev)
 	nvt_esd_check_enable(false);
 #endif /* #if NVT_TOUCH_ESD_PROTECT */
 
-	if(enable_gesture_mode){
+	if (enable_gesture_mode) {
+	//---write i2c command to enter "wakeup gesture mode"---
+	buf[0] = EVENT_MAP_HOST_CMD;
+	buf[1] = 0x13;
+	CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 2);
 
-		buf[0] = EVENT_MAP_HOST_CMD;
-		buf[1] = 0x13;
-#if 0
-		buf[2] = 0xFF;
-		buf[3] = 0xFF;
-		CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 4);
-#else
-		CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 2);
-#endif
+	enable_irq_wake(ts->client->irq);
 
-		enable_irq_wake(ts->client->irq);
+	NVT_LOG("Enabled touch wakeup gesture\n");
 
-		NVT_LOG("Enabled touch wakeup gesture\n");
+	} else {  // WAKEUP_GESTURE
+	disable_irq(ts->client->irq);
 
-	}else{
-		disable_irq(ts->client->irq);
-
-
-		buf[0] = EVENT_MAP_HOST_CMD;
-		buf[1] = 0x11;
-		CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 2);
-	}
+	//---write i2c command to enter "deep sleep mode"---
+	buf[0] = EVENT_MAP_HOST_CMD;
+	buf[1] = 0x11;
+	CTP_I2C_WRITE(ts->client, I2C_FW_Address, buf, 2);
+	}// WAKEUP_GESTURE
 
 	/* release all touches */
 #if MT_PROTOCOL_B
@@ -1660,17 +1667,16 @@ static int32_t nvt_ts_resume(struct device *dev)
 	nvt_bootloader_reset();
 	nvt_check_fw_reset_state(RESET_STATE_REK);
 
-	if (delay_gesture) {
-		enable_gesture_mode = !enable_gesture_mode;
-	}
+if (delay_gesture) {
+	enable_gesture_mode = !enable_gesture_mode;
+}
+if (!enable_gesture_mode) {
+	enable_irq(ts->client->irq);
+}
 
-	if (!enable_gesture_mode) {
-		enable_irq(ts->client->irq);
-	}
-
-	if (delay_gesture) {
-		enable_gesture_mode = !enable_gesture_mode;
-	}
+if (delay_gesture) {
+	enable_gesture_mode = !enable_gesture_mode;
+}
 
 #if NVT_TOUCH_ESD_PROTECT
 	queue_delayed_work(nvt_esd_check_wq, &nvt_esd_check_work,
