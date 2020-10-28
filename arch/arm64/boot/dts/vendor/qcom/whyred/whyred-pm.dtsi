@@ -105,6 +105,10 @@
 	usb_nop_phy: usb_nop_phy {
 		compatible = "usb-nop-xceiv";
 	};
+
+	restart@10ac000 {
+		qcom,force-warm-reboot;
+	};
 };
 
 &spmi_bus {
