@@ -139,6 +139,7 @@ struct nvt_ts_data {
 	uint16_t nvt_pid;
 	uint8_t xbuf[1025];
 	struct mutex xbuf_lock;
+	struct wakeup_source *gestrue_wakelock;
 };
 
 #if NVT_TOUCH_PROC
