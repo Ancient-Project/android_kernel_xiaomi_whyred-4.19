@@ -2,6 +2,7 @@
 /*
  * Copyright (c) 2016-2018, 2020, The Linux Foundation. All rights reserved.
  */
+/* Copyright (C) 2019 XiaoMi, Inc. */
 
 #ifndef __FG_REG_H__
 #define __FG_REG_H__
@@ -58,9 +59,13 @@
 #define BATT_SOC_RESTART(chip)			(chip->batt_soc_base + 0x48)
 #define RESTART_GO_BIT				BIT(0)
 
+/* BCL_RESET */
+#define BCL_RESET_BIT				BIT(2)
+
 #define BATT_SOC_STS_CLR(chip)			(chip->batt_soc_base + 0x4A)
 #define BATT_SOC_LOW_PWR_CFG(chip)		(chip->batt_soc_base + 0x52)
 #define BATT_SOC_LOW_PWR_STS(chip)		(chip->batt_soc_base + 0x56)
+#define BATT_SOC_RST_CTRL0(chip)		(chip->batt_soc_base + 0xBA)
 /* BATT_SOC_RST_CTRL0 */
 #define BCL_RST_BIT				BIT(2)
 #define MEM_RST_BIT				BIT(1)
@@ -280,10 +285,16 @@
 #define ADC_ENABLE_REG_CTRL_BIT			BIT(1)
 #define WDOG_FORCE_EXP_BIT			BIT(0)
 
+#define BATT_INFO_PEEK_MUX1(chip)		(chip->batt_info_base + 0xEB)
+#define BATT_INFO_RDBACK(chip)			(chip->batt_info_base + 0xEF)
+
 #define BATT_INFO_TM_MISC1(chip)		(chip->batt_info_base + 0xE6)
 /* for v2.0 and above */
 #define ESR_REQ_CTL_BIT				BIT(1)
 #define ESR_REQ_CTL_EN_BIT			BIT(0)
+
+/* BATT_INFO_PEEK_MUX1 */
+#define PEEK_MUX1_BIT				BIT(0)
 
 #define BATT_INFO_PEEK_MUX4(chip)		(chip->batt_info_base + 0xEE)
 #define ALG_ACTIVE_PEEK_CFG			0xAC
@@ -356,6 +367,9 @@
 #define MEM_IF_DMA_CTL(chip)			((chip->mem_if_base) + 0x71)
 #define ADDR_KIND_BIT				BIT(1)
 #define DMA_CLEAR_LOG_BIT			BIT(0)
+
+/* MEM_IF_REQ */
+#define MEM_IF_ARB_REQ_BIT			BIT(0)
 
 /* FG_DMAx */
 #define FG_DMA0_BASE				0x4800
