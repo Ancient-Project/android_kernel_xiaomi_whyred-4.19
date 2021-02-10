@@ -46,6 +46,10 @@
 };
 
 &soc {
+	qcom,bcl {
+		qcom,bcl-soc-hotplug-list = <>;
+	};
+
 	ant_check {
 		compatible = "ant_check";
 		ant_check_gpio = <&tlmm 74 0x0>;
